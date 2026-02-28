@@ -332,6 +332,10 @@
         .similar-item-details div:last-child {
             border-bottom: none;
         }
+        .similar-item-details div.table-no-zero {
+            color: #c00;
+            font-weight: bold;
+        }
 
         .similarity-badge {
             display: inline-block;
@@ -679,6 +683,10 @@
                 <label for="collectorInput">수금자</label>
                 <input id="collectorInput" type="text" />
             </div>
+            <div class="edit-row">
+                <label for="tableNoInput">TABLE #</label>
+                <input id="tableNoInput" type="text" placeholder="0" />
+            </div>
             <div class="edit-actions">
                 <button onclick="saveToGoogleSheets()">Google Sheets에 저장</button>
             </div>
@@ -712,6 +720,18 @@
         let currentEditRowIndex = null; // Google Sheets에서 수정할 행 인덱스 (데이터 기준, 헤더 제외)
         let headerRemoved = false; // 헤더가 제거되었는지 여부
         const GOOGLE_APPS_SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbyZWeUb9odP4SmBnxxc1v-momH4TEnF3x5XNyqQ3aFEF4pLCUkLnMtsu5czcNhmpg7F7A/exec';
+        const TABLE_COLUMN_INDEX = 11; // L열 (TABLE #) - 표시용
+
+        // 모든 행을 최소 minCols열로 맞춤 (CSV/엑셀에서 열 수가 달라도 L열 값 읽기 가능)
+        function normalizeRowColumns(rows, minCols) {
+            if (!rows || !Array.isArray(rows)) return rows;
+            return rows.map(row => {
+                if (!Array.isArray(row)) return row;
+                const arr = row.slice();
+                while (arr.length < minCols) arr.push('');
+                return arr;
+            });
+        }
         let html5QrcodeScanner = null; // QR 코드 스캐너 인스턴스
         let isQRScannerRunning = false; // QR 스캐너 실행 상태 추적
 
@@ -753,7 +773,7 @@
                     if (cached) {
                         const { data, timestamp } = JSON.parse(cached);
                         if (Date.now() - timestamp < CACHE_DURATION) {
-                            memberData = data;
+                            memberData = normalizeRowColumns(data, 12);
                             isDataLoaded = true;
                             showLoading(false);
                             console.log('캐시에서 데이터 로드 완료:', memberData.length, '행');
@@ -840,8 +860,8 @@
                                 headerRemoved = true;
                             }
                         }
-                        
-                        memberData = parsedData;
+                        // L열(TABLE #)까지 읽을 수 있도록 모든 행을 최소 12열로 맞춤
+                        memberData = normalizeRowColumns(parsedData, 12);
                         isDataLoaded = true;
                         
                         // 캐시에 저장
@@ -961,7 +981,8 @@
                             headerRemoved = true;
                             }
                         }
-                        
+                        // L열(TABLE #)까지 읽을 수 있도록 모든 행을 최소 12열로 맞춤
+                        memberData = normalizeRowColumns(memberData, 12);
                         isDataLoaded = true;
                         showResult('파일이 성공적으로 로드되었습니다.', 'success');
                         console.log('데이터 로드 완료:', memberData.length, '행');
@@ -1051,19 +1072,22 @@
             }
 
             const MIN_SIMILARITY = 60; // 60% 이상 유사도 필요
+            const INFORMATION_COLUMN_INDEX = 9; // J열(인포메이션) - 검색 제외
             let found = false;
             const similarItems = [];
             const processedRows = new Set(); // 중복 행 제거를 위한 Set
 
-            // 모든 데이터에서 검색
+            // 모든 데이터에서 검색 (J열 인포메이션 제외)
             for (let rowIndex = 0; rowIndex < memberData.length; rowIndex++) {
                 const row = memberData[rowIndex];
                 let maxSimilarity = 0;
                 let matchedCell = '';
                 
                 if (Array.isArray(row)) {
-                    // 배열의 모든 셀에서 검색
-                    for (let cell of row) {
+                    // 배열의 모든 셀에서 검색 (J열 제외)
+                    for (let colIndex = 0; colIndex < row.length; colIndex++) {
+                        if (colIndex === INFORMATION_COLUMN_INDEX) continue; // J열 인포메이션 제외
+                        const cell = row[colIndex];
                         if (cell) {
                             const similarity = calculateSimilarity(searchTerm, cell);
                             if (similarity >= MIN_SIMILARITY) {
@@ -1091,8 +1115,9 @@
                         }
                     }
                 } else if (typeof row === 'object') {
-                    // 객체인 경우 모든 값에서 검색
+                    // 객체인 경우 모든 값에서 검색 (J열 인포메이션 제외)
                     for (let key in row) {
+                        if (key === '9' || key === 'Information' || key === '인포메이션') continue; // J열 제외
                         if (row[key]) {
                             const similarity = calculateSimilarity(searchTerm, row[key]);
                             if (similarity >= MIN_SIMILARITY) {
@@ -1159,44 +1184,48 @@
                 details.className = 'similar-item-details';
                 
                 if (Array.isArray(item.rowData)) {
-                    // Google Sheets 컬럼 매핑: 지역-A, 업소명-B, 주소-C, 전화번호-D, 이름-E, 회비-F, 티켓-G, 참석인원-H, 수금방식-I, 수금자-J
+                    // Google Sheets 컬럼 매핑: 지역-A, ..., 수금자-J, (K), TABLE #-L
                     const displayOrder = [
-                        { index: 0, label: '지역' },           // A: 지역
-                        { index: 1, label: '업소명' },         // B: 업소명
-                        { index: 2, label: '주소' },           // C: 주소
-                        { index: 3, label: '전화번호', format: 'phone' }, // D: 전화번호
-                        { index: 4, label: '이름' },           // E: 이름
-                        { index: 5, label: '회비' },           // F: 회비
-                        { index: 6, label: '티켓' },           // G: 티켓
-                        { index: 7, label: '참석인원' },       // H: 참석인원
-                        { index: 8, label: '수금방식' },       // I: 수금방식
-                        { index: 9, label: '수금자' }          // J: 수금자
+                        { index: 0, label: '지역' },           // A
+                        { index: 1, label: '업소명' },         // B
+                        { index: 2, label: '주소' },           // C
+                        { index: 3, label: '전화번호', format: 'phone' }, // D
+                        { index: 4, label: '이름' },           // E
+                        { index: 5, label: '회비' },           // F
+                        { index: 6, label: '티켓' },           // G
+                        { index: 7, label: '참석인원' },       // H
+                        { index: 8, label: '수금방식' },       // I
+                        { index: 9, label: '수금자' },          // J
+                        { index: TABLE_COLUMN_INDEX, label: 'TABLE #', tableNo: true }   // L만 사용, K열 확인 안 함
                     ];
                     
-                    // 요청한 순서대로 표시 (값이 없어도 표시)
                     displayOrder.forEach(col => {
-                        const cell = item.rowData[col.index];
+                        const cell = item.rowData[col.index]; // L열(11)만 사용
                         const detailDiv = document.createElement('div');
                         let displayValue = '';
-                        
-                        if (cell !== null && cell !== undefined && String(cell).trim() !== '') {
-                            displayValue = col.format === 'phone' ? formatPhoneNumber(cell) : cell;
+                        const hasValue = cell !== undefined && cell !== null && String(cell).trim() !== '';
+                        if (hasValue) {
+                            displayValue = col.format === 'phone' ? formatPhoneNumber(cell) : String(cell).trim();
                         } else {
-                            displayValue = '-'; // 값이 없으면 '-' 표시
+                            displayValue = col.tableNo ? '0' : '-'; // TABLE # 비어 있으면 숫자 0 표시
                         }
-                        
                         detailDiv.textContent = `${col.label}: ${displayValue}`;
+                        if (col.tableNo && !hasValue) detailDiv.classList.add('table-no-zero'); // 0일 때 빨간색
                         details.appendChild(detailDiv);
                     });
                 } else if (typeof item.rowData === 'object') {
-                    // 객체인 경우 키-값 쌍으로 표시
+                    // 객체인 경우 키-값 쌍으로 표시 (L열 TABLE # 포함)
+                    const TABLE_KEY = '11'; // L열 인덱스
                     for (let key in item.rowData) {
-                        if (item.rowData[key] !== null && item.rowData[key] !== undefined && String(item.rowData[key]).trim() !== '') {
+                        const label = (key === TABLE_KEY) ? 'TABLE #' : key;
+                        const val = item.rowData[key];
+                        const isEmpty = val === null || val === undefined || String(val).trim() === '';
+                        if (!isEmpty || key === TABLE_KEY) {
                             const detailDiv = document.createElement('div');
-                            // 키가 전화번호 관련인 경우 포맷팅 적용
-                            const isPhoneKey = key.toLowerCase().includes('전화') || key.toLowerCase().includes('phone') || key.toLowerCase().includes('tel');
-                            const displayValue = isPhoneKey ? formatPhoneNumber(item.rowData[key]) : item.rowData[key];
-                            detailDiv.textContent = `${key}: ${displayValue}`;
+                            const isPhoneKey = key !== TABLE_KEY && (key.toLowerCase().includes('전화') || key.toLowerCase().includes('phone') || key.toLowerCase().includes('tel'));
+                            let displayValue = isEmpty ? (key === TABLE_KEY ? '0' : '-') : (isPhoneKey ? formatPhoneNumber(val) : val);
+                            if (key === TABLE_KEY && isEmpty) detailDiv.classList.add('table-no-zero');
+                            detailDiv.textContent = `${label}: ${displayValue}`;
                             details.appendChild(detailDiv);
                         }
                     }
@@ -1314,6 +1343,9 @@
             document.getElementById('attendInput').value = row[7] || '';
             document.getElementById('payMethodInput').value = row[8] || '';
             document.getElementById('collectorInput').value = row[9] || '';
+            // L열 TABLE # (비어 있으면 0으로 표시)
+            const tableNoVal = row[TABLE_COLUMN_INDEX];
+            document.getElementById('tableNoInput').value = (tableNoVal !== undefined && tableNoVal !== null && String(tableNoVal).trim() !== '') ? String(tableNoVal).trim() : '0';
 
             document.getElementById('editPanel').classList.remove('hidden');
         }
@@ -1346,6 +1378,7 @@
             const attend = document.getElementById('attendInput').value;
             const payMethod = document.getElementById('payMethodInput').value;
             const collector = document.getElementById('collectorInput').value;
+            const tableNo = document.getElementById('tableNoInput').value.trim();
 
             // 원본 rowData를 사용하여 memberData에서 정확한 행 찾기
             let exactRowIndex = -1;
@@ -1471,7 +1504,8 @@
                 `티켓: ${ticket || '(비어있음)'}\n` +
                 `참석인원: ${attend || '(비어있음)'}\n` +
                 `수금방식: ${payMethod || '(비어있음)'}\n` +
-                `수금자: ${collector || '(비어있음)'}`;
+                `수금자: ${collector || '(비어있음)'}\n` +
+                `TABLE #: ${tableNo !== '' ? tableNo : '0'}`;
             
             if (!confirm(confirmMessage)) {
                 console.log('사용자가 저장을 취소했습니다.');
@@ -1485,6 +1519,7 @@
                 attend,
                 payMethod,
                 collector,
+                tableNo: tableNo !== '' ? tableNo : '0',
                 // 디버깅용: 저장할 회원 정보도 함께 전달
                 storeName: currentMember[1],
                 memberName: currentMember[4],
@@ -1492,6 +1527,7 @@
             };
             
             console.log('📤 Google Apps Script에 전달할 데이터:', payload);
+            console.log('📤 TABLE #(L열) 전송값:', tableNo !== '' ? tableNo : '0');
 
             try {
                 showLoading(true);
@@ -1506,6 +1542,7 @@
                     attend: String(attend || ''),
                     payMethod: String(payMethod || ''),
                     collector: String(collector || ''),
+                    tableNo: String(tableNo !== '' ? tableNo : '0'), // L열 TABLE #
                     // 회원 정보 (Google Apps Script에서 검증 및 행 찾기용)
                     region: String(currentMember[0] || ''),      // A: 지역
                     storeName: String(currentMember[1] || ''),   // B: 업소명
@@ -1515,19 +1552,12 @@
                 });
                 
                 // POST + application/x-www-form-urlencoded 사용 (Apps Script가 e.parameter에 넣어줌 → K열 날짜 기록 가능)
-                const postBody = params.toString();
-                console.log('📤 Google Apps Script에 POST 전달, row:', String(validSheetRow));
+                const queryString = params.toString();
+                // GET으로 전달하면 e.parameter에 tableNo 등 모든 값이 확실히 들어감 (POST 본문 파싱 이슈 회피)
+                const saveUrl = `${GOOGLE_APPS_SCRIPT_URL}?${queryString}`;
+                console.log('📤 Google Apps Script에 GET 전달, row:', String(validSheetRow), ', tableNo:', params.get('tableNo'));
                 
-                const response = await fetch(GOOGLE_APPS_SCRIPT_URL, {
-                    method: 'POST',
-                    mode: 'no-cors',
-                    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-                    body: postBody
-                }).catch(async () => {
-                    // POST 실패 시 GET으로 재시도 (URL 길이 제한 있음)
-                    const url = `${GOOGLE_APPS_SCRIPT_URL}?${postBody}`;
-                    return await fetch(url, { method: 'GET', mode: 'no-cors' });
-                });
+                const response = await fetch(saveUrl, { method: 'GET', mode: 'no-cors' });
 
                 // no-cors 모드에서는 응답을 확인할 수 없으므로, 성공으로 간주
                 // 로컬 데이터 업데이트 (정확한 행 인덱스 사용)
@@ -1539,6 +1569,7 @@
                 memberData[exactRowIndex][7] = attend;
                 memberData[exactRowIndex][8] = payMethod;
                 memberData[exactRowIndex][9] = collector;
+                memberData[exactRowIndex][TABLE_COLUMN_INDEX] = tableNo !== '' ? tableNo : '0'; // L열 TABLE #
                 
                 // currentEditRowIndex도 업데이트
                 currentEditRowIndex = exactRowIndex;
@@ -1699,3 +1730,4 @@
         
 </body>
 </html>
+
