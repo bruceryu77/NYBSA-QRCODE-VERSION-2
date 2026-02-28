@@ -336,6 +336,14 @@
             color: #c00;
             font-weight: bold;
         }
+        /* TABLE #: 구글시트 값만 표시, 크고 굵은 파란색 */
+        .similar-item-details div.table-no-display {
+            font-size: 1.25em;
+            font-weight: bold;
+            color: #1a73e8;
+            margin-top: 6px;
+            margin-bottom: 6px;
+        }
 
         .similarity-badge {
             display: inline-block;
@@ -682,10 +690,6 @@
             <div class="edit-row">
                 <label for="collectorInput">수금자</label>
                 <input id="collectorInput" type="text" />
-            </div>
-            <div class="edit-row">
-                <label for="tableNoInput">TABLE #</label>
-                <input id="tableNoInput" type="text" placeholder="0" />
             </div>
             <div class="edit-actions">
                 <button onclick="saveToGoogleSheets()">Google Sheets에 저장</button>
@@ -1207,10 +1211,10 @@
                         if (hasValue) {
                             displayValue = col.format === 'phone' ? formatPhoneNumber(cell) : String(cell).trim();
                         } else {
-                            displayValue = col.tableNo ? '0' : '-'; // TABLE # 비어 있으면 숫자 0 표시
+                            displayValue = col.tableNo ? '0' : '-'; // TABLE # 비어 있으면 0 표시
                         }
                         detailDiv.textContent = `${col.label}: ${displayValue}`;
-                        if (col.tableNo && !hasValue) detailDiv.classList.add('table-no-zero'); // 0일 때 빨간색
+                        if (col.tableNo) detailDiv.classList.add('table-no-display'); // 구글시트 값만 표시, 크고 굵은 파란색
                         details.appendChild(detailDiv);
                     });
                 } else if (typeof item.rowData === 'object') {
@@ -1224,7 +1228,7 @@
                             const detailDiv = document.createElement('div');
                             const isPhoneKey = key !== TABLE_KEY && (key.toLowerCase().includes('전화') || key.toLowerCase().includes('phone') || key.toLowerCase().includes('tel'));
                             let displayValue = isEmpty ? (key === TABLE_KEY ? '0' : '-') : (isPhoneKey ? formatPhoneNumber(val) : val);
-                            if (key === TABLE_KEY && isEmpty) detailDiv.classList.add('table-no-zero');
+                            if (key === TABLE_KEY) detailDiv.classList.add('table-no-display');
                             detailDiv.textContent = `${label}: ${displayValue}`;
                             details.appendChild(detailDiv);
                         }
@@ -1343,9 +1347,6 @@
             document.getElementById('attendInput').value = row[7] || '';
             document.getElementById('payMethodInput').value = row[8] || '';
             document.getElementById('collectorInput').value = row[9] || '';
-            // L열 TABLE # (비어 있으면 0으로 표시)
-            const tableNoVal = row[TABLE_COLUMN_INDEX];
-            document.getElementById('tableNoInput').value = (tableNoVal !== undefined && tableNoVal !== null && String(tableNoVal).trim() !== '') ? String(tableNoVal).trim() : '0';
 
             document.getElementById('editPanel').classList.remove('hidden');
         }
@@ -1378,7 +1379,6 @@
             const attend = document.getElementById('attendInput').value;
             const payMethod = document.getElementById('payMethodInput').value;
             const collector = document.getElementById('collectorInput').value;
-            const tableNo = document.getElementById('tableNoInput').value.trim();
 
             // 원본 rowData를 사용하여 memberData에서 정확한 행 찾기
             let exactRowIndex = -1;
@@ -1504,8 +1504,7 @@
                 `티켓: ${ticket || '(비어있음)'}\n` +
                 `참석인원: ${attend || '(비어있음)'}\n` +
                 `수금방식: ${payMethod || '(비어있음)'}\n` +
-                `수금자: ${collector || '(비어있음)'}\n` +
-                `TABLE #: ${tableNo !== '' ? tableNo : '0'}`;
+                `수금자: ${collector || '(비어있음)'}`;
             
             if (!confirm(confirmMessage)) {
                 console.log('사용자가 저장을 취소했습니다.');
@@ -1519,7 +1518,6 @@
                 attend,
                 payMethod,
                 collector,
-                tableNo: tableNo !== '' ? tableNo : '0',
                 // 디버깅용: 저장할 회원 정보도 함께 전달
                 storeName: currentMember[1],
                 memberName: currentMember[4],
@@ -1527,7 +1525,6 @@
             };
             
             console.log('📤 Google Apps Script에 전달할 데이터:', payload);
-            console.log('📤 TABLE #(L열) 전송값:', tableNo !== '' ? tableNo : '0');
 
             try {
                 showLoading(true);
@@ -1542,7 +1539,6 @@
                     attend: String(attend || ''),
                     payMethod: String(payMethod || ''),
                     collector: String(collector || ''),
-                    tableNo: String(tableNo !== '' ? tableNo : '0'), // L열 TABLE #
                     // 회원 정보 (Google Apps Script에서 검증 및 행 찾기용)
                     region: String(currentMember[0] || ''),      // A: 지역
                     storeName: String(currentMember[1] || ''),   // B: 업소명
@@ -1555,7 +1551,7 @@
                 const queryString = params.toString();
                 // GET으로 전달하면 e.parameter에 tableNo 등 모든 값이 확실히 들어감 (POST 본문 파싱 이슈 회피)
                 const saveUrl = `${GOOGLE_APPS_SCRIPT_URL}?${queryString}`;
-                console.log('📤 Google Apps Script에 GET 전달, row:', String(validSheetRow), ', tableNo:', params.get('tableNo'));
+                console.log('📤 Google Apps Script에 GET 전달, row:', String(validSheetRow));
                 
                 const response = await fetch(saveUrl, { method: 'GET', mode: 'no-cors' });
 
@@ -1569,8 +1565,7 @@
                 memberData[exactRowIndex][7] = attend;
                 memberData[exactRowIndex][8] = payMethod;
                 memberData[exactRowIndex][9] = collector;
-                memberData[exactRowIndex][TABLE_COLUMN_INDEX] = tableNo !== '' ? tableNo : '0'; // L열 TABLE #
-                
+
                 // currentEditRowIndex도 업데이트
                 currentEditRowIndex = exactRowIndex;
 
